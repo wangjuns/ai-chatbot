@@ -36,9 +36,17 @@ import { SpinnerMessage, UserMessage } from '@/components/stocks/message'
 import { Chat } from '@/lib/types'
 import { auth } from '@/auth'
 
+const resource = process.env.AZURE_OPENAI_RESOURCE; //without the .openai.azure.com
+const model = process.env.AZURE_OPENAI_DEPLOYMENT_ID;
+const apiVersion = '2024-02-01';
+const apiKey = process.env.OPENAI_API_KEY;
+
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || ''
-})
+  apiKey,
+  baseURL: `https://gateway.ai.cloudflare.com/v1/${process.env.CF_ACCOUNT_TAG}/${process.env.CF_AI_GATEWAY}/azure-openai/${resource}/${model}`,
+  defaultQuery: { 'api-version': apiVersion },
+  defaultHeaders: { 'api-key': apiKey },
+});
 
 async function confirmPurchase(symbol: string, price: number, amount: number) {
   'use server'
@@ -104,9 +112,8 @@ async function confirmPurchase(symbol: string, price: number, amount: number) {
         {
           id: nanoid(),
           role: 'system',
-          content: `[User has purchased ${amount} shares of ${symbol} at ${price}. Total cost = ${
-            amount * price
-          }]`
+          content: `[User has purchased ${amount} shares of ${symbol} at ${price}. Total cost = ${amount * price
+            }]`
         }
       ]
     })
@@ -123,6 +130,14 @@ async function confirmPurchase(symbol: string, price: number, amount: number) {
 
 async function submitUserMessage(content: string) {
   'use server'
+
+  const session = await auth();
+
+  if (!session) {
+    return {
+      error: 'Unauthorized'
+    }
+  }
 
   const aiState = getMutableAIState<typeof AI>()
 
@@ -142,7 +157,7 @@ async function submitUserMessage(content: string) {
   let textNode: undefined | React.ReactNode
 
   const ui = render({
-    model: 'gpt-3.5-turbo',
+    model: 'gpt-4',
     provider: openai,
     initial: <SpinnerMessage />,
     messages: [
