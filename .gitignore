@@ -36,6 +36,6 @@ yarn-error.log*
 .vercel
 .vscode
 .env*.local
-package-lock.json
 pwd.ts
 tt
+pnpm-lock.yaml
