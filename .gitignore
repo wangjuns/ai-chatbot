@@ -37,3 +37,5 @@ yarn-error.log*
 .vscode
 .env*.local
 package-lock.json
+pwd.ts
+tt

@@ -7,7 +7,7 @@ import { ChatList } from '@/components/chat-list'
 import { FooterText } from '@/components/footer'
 import { AI, UIState, getUIStateFromAIState } from '@/lib/chat/actions'
 
-export const runtime = 'edge'
+// export const runtime = 'server'
 export const preferredRegion = 'home'
 
 interface SharePageProps {

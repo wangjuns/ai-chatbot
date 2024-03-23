@@ -2,10 +2,31 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { kv } from '@vercel/kv'
+import { DocumentSnapshot, Firestore, QueryDocumentSnapshot } from '@google-cloud/firestore';
 
 import { auth } from '@/auth'
 import { type Chat } from '@/lib/types'
+
+
+// Create a new client
+const firestore = new Firestore();
+
+function readChat(snapshot: QueryDocumentSnapshot | DocumentSnapshot): Chat | undefined {
+  if (!snapshot.data()) {
+    return undefined;
+  }
+  const { id, title, userId, path, messages, sharePath, createdAt } = snapshot.data()!;
+  return {
+    id,
+    title,
+    createdAt: createdAt?.toDate(),
+    userId,
+    path,
+    messages,
+    sharePath,
+  } as Chat;
+}
+
 
 export async function getChats(userId?: string | null) {
   if (!userId) {
@@ -13,31 +34,31 @@ export async function getChats(userId?: string | null) {
   }
 
   try {
-    const pipeline = kv.pipeline()
-    const chats: string[] = await kv.zrange(`user:chat:${userId}`, 0, -1, {
-      rev: true
-    })
-
-    for (const chat of chats) {
-      pipeline.hgetall(chat)
+    const ref = firestore.collection('chat');
+    const snapshot = await ref.where('userId', '==', userId).get();
+    if (snapshot.empty) {
+      console.log('No matching documents.');
+      return;
     }
 
-    const results = await pipeline.exec()
+    const chats = snapshot.docs.map(doc => { return readChat(doc) });
 
-    return results as Chat[]
+    // console.log("chats: ", JSON.stringify(chats))
+
+    return chats as Chat[]
   } catch (error) {
     return []
   }
 }
 
 export async function getChat(id: string, userId: string) {
-  const chat = await kv.hgetall<Chat>(`chat:${id}`)
+  const chat = await firestore.collection('chat').doc(id).get()
 
-  if (!chat || (userId && chat.userId !== userId)) {
+  if (!chat.exists || (userId && chat.data()!.userId !== userId)) {
     return null
   }
 
-  return chat
+  return chat.data() as Chat;
 }
 
 export async function removeChat({ id, path }: { id: string; path: string }) {
@@ -48,19 +69,23 @@ export async function removeChat({ id, path }: { id: string; path: string }) {
       error: 'Unauthorized'
     }
   }
+  const ref = firestore.collection('chat').doc(id);
+  const chat = (await ref.get()).data()
+
 
   //Convert uid to string for consistent comparison with session.user.id
-  const uid = String(await kv.hget(`chat:${id}`, 'userId'))
 
-  if (uid !== session?.user?.id) {
-    return {
-      error: 'Unauthorized'
+  if (chat) {
+    const uid = chat.userId;
+
+    if (uid !== session?.user?.id) {
+      return {
+        error: 'Unauthorized'
+      }
     }
+
+    await ref.delete();
   }
-
-  await kv.del(`chat:${id}`)
-  await kv.zrem(`user:chat:${session.user.id}`, `chat:${id}`)
-
   revalidatePath('/')
   return revalidatePath(path)
 }
@@ -74,25 +99,16 @@ export async function clearChats() {
     }
   }
 
-  const chats: string[] = await kv.zrange(`user:chat:${session.user.id}`, 0, -1)
-  if (!chats.length) {
-    return redirect('/')
-  }
-  const pipeline = kv.pipeline()
-
-  for (const chat of chats) {
-    pipeline.del(chat)
-    pipeline.zrem(`user:chat:${session.user.id}`, chat)
-  }
-
-  await pipeline.exec()
+  //TODO do nothings now.
 
   revalidatePath('/')
   return redirect('/')
 }
 
 export async function getSharedChat(id: string) {
-  const chat = await kv.hgetall<Chat>(`chat:${id}`)
+  const ref = firestore.collection('chat').doc(id);
+
+  const chat = readChat((await ref.get()))
 
   if (!chat || !chat.sharePath) {
     return null
@@ -110,7 +126,8 @@ export async function shareChat(id: string) {
     }
   }
 
-  const chat = await kv.hgetall<Chat>(`chat:${id}`)
+  const ref = firestore.collection('chat').doc(id);
+  const chat = readChat((await ref.get()))
 
   if (!chat || chat.userId !== session.user.id) {
     return {
@@ -118,27 +135,21 @@ export async function shareChat(id: string) {
     }
   }
 
-  const payload = {
-    ...chat,
-    sharePath: `/share/${chat.id}`
-  }
+  await ref.update({ sharePath: `/share/${chat.id}` })
 
-  await kv.hmset(`chat:${chat.id}`, payload)
-
-  return payload
+  return { ...chat, sharePath: `/share/${chat.id}` }
 }
 
 export async function saveChat(chat: Chat) {
   const session = await auth()
 
   if (session && session.user) {
-    const pipeline = kv.pipeline()
-    pipeline.hmset(`chat:${chat.id}`, chat)
-    pipeline.zadd(`user:chat:${chat.userId}`, {
-      score: Date.now(),
-      member: `chat:${chat.id}`
-    })
-    await pipeline.exec()
+    try {
+      await firestore.collection('chat').doc(chat.id).set(chat)
+    } catch (error) {
+      console.error('Error writing document: ', error);
+    }
+
   } else {
     return
   }

@@ -6,10 +6,25 @@ import { AuthError } from 'next-auth'
 import { z } from 'zod'
 import { kv } from '@vercel/kv'
 import { ResultCode } from '@/lib/utils'
+import { Firestore } from '@google-cloud/firestore';
+
+// Create a new client
+const firestore = new Firestore();
 
 export async function getUser(email: string) {
-  const user = await kv.hgetall<User>(`user:${email}`)
-  return user
+  const user = await firestore.collection('user').doc(email).get();
+
+  const userData = user.data();
+  if (!userData) {
+    return null;
+  }
+
+  return {
+    id: userData.id,
+    password: userData.password,
+    salt: userData.slat,
+    email: userData.email,
+  } as User;
 }
 
 interface Result {
