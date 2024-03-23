@@ -41,7 +41,7 @@ const model = process.env.AZURE_OPENAI_DEPLOYMENT_ID;
 const apiVersion = '2024-02-01';
 const apiKey = process.env.OPENAI_API_KEY;
 
-const openai = new OpenAI({
+const openai = () => new OpenAI({
   apiKey,
   baseURL: `https://gateway.ai.cloudflare.com/v1/${process.env.CF_ACCOUNT_TAG}/${process.env.CF_AI_GATEWAY}/azure-openai/${resource}/${model}`,
   defaultQuery: { 'api-version': apiVersion },
@@ -78,7 +78,7 @@ async function submitUserMessage(content: string) {
 
   const ui = render({
     model: 'gpt-4',
-    provider: openai,
+    provider: openai(),
     initial: <SpinnerMessage />,
     messages: [
       {
