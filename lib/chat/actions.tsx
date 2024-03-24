@@ -35,18 +35,28 @@ import { saveChat } from '@/app/actions'
 import { SpinnerMessage, UserMessage } from '@/components/stocks/message'
 import { Chat } from '@/lib/types'
 import { auth } from '@/auth'
+import { google_search } from '../functions/google'
+import { rag } from '../functions/rag'
+import { Answer } from '@/components/search/answer'
 
 const resource = process.env.AZURE_OPENAI_RESOURCE; //without the .openai.azure.com
 const model = process.env.AZURE_OPENAI_DEPLOYMENT_ID;
 const apiVersion = '2024-02-01';
 const apiKey = process.env.OPENAI_API_KEY;
 
-const openai = () => new OpenAI({
-  apiKey,
-  baseURL: `https://gateway.ai.cloudflare.com/v1/${process.env.CF_ACCOUNT_TAG}/${process.env.CF_AI_GATEWAY}/azure-openai/${resource}/${model}`,
-  defaultQuery: { 'api-version': apiVersion },
-  defaultHeaders: { 'api-key': apiKey },
-});
+let _openai: OpenAI;
+const openai = () => {
+
+  if (!_openai) {
+    _openai = new OpenAI({
+      apiKey,
+      baseURL: `https://gateway.ai.cloudflare.com/v1/${process.env.CF_ACCOUNT_TAG}/${process.env.CF_AI_GATEWAY}/azure-openai/${resource}/${model}`,
+      defaultQuery: { 'api-version': apiVersion },
+      defaultHeaders: { 'api-key': apiKey },
+    });
+  }
+  return _openai;
+}
 
 async function submitUserMessage(content: string) {
   'use server'
@@ -125,26 +135,29 @@ async function submitUserMessage(content: string) {
       return textNode
     },
     functions: {
-      showStockPrice: {
+      search: {
         description:
-          'Get the current stock price of a given stock or currency. Use this to show the price to the user.',
+          'Google Search. Use this to get latest information.',
         parameters: z.object({
-          symbol: z
+          query: z
             .string()
             .describe(
-              'The name or symbol of the stock or currency. e.g. DOGE/AAPL/USD.'
+              'The search query.'
             ),
-          price: z.number().describe('The price of the stock.'),
-          delta: z.number().describe('The change in price of the stock')
         }),
-        render: async function* ({ symbol, price, delta }) {
-          yield (
-            <BotCard>
-              <StockSkeleton />
-            </BotCard>
-          )
+        render: async function* ({ query }) {
+          const context = await google_search(query)
+          let markdown = ""
 
-          await sleep(1000)
+
+          const messages = aiState.get().messages;
+          const lastMessage = messages[messages.length - 1]
+          const sources = context.map((c, i) => { return { id: i, url: c.link, name: c.title } })
+
+          for await (const chunk of rag(lastMessage.content, context, openai())) {
+            markdown = chunk;
+            yield (<Answer markdown={markdown} sources={sources} />)
+          }
 
           aiState.done({
             ...aiState.get(),
@@ -153,16 +166,15 @@ async function submitUserMessage(content: string) {
               {
                 id: nanoid(),
                 role: 'function',
-                name: 'showStockPrice',
-                content: JSON.stringify({ symbol, price, delta })
+                name: 'search',
+                content: JSON.stringify({ markdown, sources })
               }
             ]
           })
 
+
           return (
-            <BotCard>
-              <Stock props={{ symbol, price, delta }} />
-            </BotCard>
+            <BotMessage content={content} />
           )
         }
       },
@@ -250,22 +262,8 @@ export const getUIStateFromAIState = (aiState: Chat) => {
       id: `${aiState.chatId}-${index}`,
       display:
         message.role === 'function' ? (
-          message.name === 'listStocks' ? (
-            <BotCard>
-              <Stocks props={JSON.parse(message.content)} />
-            </BotCard>
-          ) : message.name === 'showStockPrice' ? (
-            <BotCard>
-              <Stock props={JSON.parse(message.content)} />
-            </BotCard>
-          ) : message.name === 'showStockPurchase' ? (
-            <BotCard>
-              <Purchase props={JSON.parse(message.content)} />
-            </BotCard>
-          ) : message.name === 'getEvents' ? (
-            <BotCard>
-              <Events props={JSON.parse(message.content)} />
-            </BotCard>
+          message.name === 'search' ? (
+            <Answer {...JSON.parse(message.content)} />
           ) : null
         ) : message.role === 'user' ? (
           <UserMessage>{message.content}</UserMessage>
