@@ -156,6 +156,7 @@ async function submitUserMessage(content: string) {
 
           for await (const chunk of rag(lastMessage.content, context, openai())) {
             markdown = chunk;
+            //@ts-expect-error ignore missing field
             yield (<Answer markdown={markdown} sources={sources} />)
           }
 

@@ -61,31 +61,3 @@ export async function google_search(query: string): Promise<SearchItem[]> {
         return [];
     }
 }
-
-export async function* searchRender({ query }: { query: string }) {
-    yield (
-        <BotCard>
-            <StockSkeleton />
-        </BotCard>
-    )
-
-    const results = await google_search(query)
-
-    aiState.done({
-        ...aiState.get(),
-        messages: [
-            ...aiState.get().messages,
-            {
-                id: nanoid(),
-                role: 'function',
-                name: 'search',
-                content: JSON.stringify(results)
-            }
-        ]
-    })
-
-    return (
-        <BotMessage content={JSON.stringify(results)} />
-    )
-
-}
