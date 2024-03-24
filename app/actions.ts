@@ -7,7 +7,6 @@ import { DocumentSnapshot, Firestore, QueryDocumentSnapshot } from '@google-clou
 import { auth } from '@/auth'
 import { type Chat } from '@/lib/types'
 
-
 // Create a new client
 const firestore = new Firestore();
 
@@ -35,18 +34,23 @@ export async function getChats(userId?: string | null) {
 
   try {
     const ref = firestore.collection('chat');
-    const snapshot = await ref.where('userId', '==', userId).get();
+    const snapshot = await ref.where('userId', '==', userId)
+      .orderBy("createdAt", 'desc')
+      .limit(30)
+      .get();
+
+
     if (snapshot.empty) {
       console.log('No matching documents.');
       return;
     }
-
     const chats = snapshot.docs.map(doc => { return readChat(doc) });
 
     // console.log("chats: ", JSON.stringify(chats))
 
     return chats as Chat[]
   } catch (error) {
+    console.error(error)
     return []
   }
 }
