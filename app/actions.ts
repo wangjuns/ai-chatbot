@@ -6,9 +6,18 @@ import { DocumentSnapshot, Firestore, QueryDocumentSnapshot } from '@google-clou
 
 import { auth } from '@/auth'
 import { type Chat } from '@/lib/types'
+import { LRUCache } from 'lru-cache'
+import { logger } from '@/lib/logger';
 
 // Create a new client
 const firestore = new Firestore();
+
+const options = {
+  max: 50000,
+}
+
+const cache = new LRUCache(options)
+let chatsCached = false;
 
 function readChat(snapshot: QueryDocumentSnapshot | DocumentSnapshot): Chat | undefined {
   if (!snapshot.data()) {
@@ -26,17 +35,34 @@ function readChat(snapshot: QueryDocumentSnapshot | DocumentSnapshot): Chat | un
   } as Chat;
 }
 
+async function getChatsFromCache(userId: string) {
+  const chatIds = cache.get(`${userId}_chats`) as string[] | undefined;
+  if (chatIds === undefined) {
+    return undefined;
+  }
+
+  logger.debug("cached chats: " + chatIds)
+
+  return Promise.all(chatIds.map(id => getChatWithCache(id)));
+}
+
 
 export async function getChats(userId?: string | null) {
   if (!userId) {
     return []
   }
 
+  const cached = await getChatsFromCache(userId!);
+  if (cached != undefined) {
+    return cached;
+  }
+
+
   try {
     const ref = firestore.collection('chat');
     const snapshot = await ref.where('userId', '==', userId)
       .orderBy("createdAt", 'desc')
-      .limit(30)
+      .limit(10)
       .get();
 
 
@@ -44,8 +70,17 @@ export async function getChats(userId?: string | null) {
       console.log('No matching documents.');
       return;
     }
-    const chats = snapshot.docs.map(doc => { return readChat(doc) });
 
+    const chats = snapshot.docs.map(doc => {
+      const c = readChat(doc);
+      if (c) {
+        logger.debug("populate cache. " + c.id);
+        cache.set(c.id, c);
+      }
+      return c;
+    });
+
+    cache.set(`${userId}_chats`, chats.map(c => c!.id))
     // console.log("chats: ", JSON.stringify(chats))
 
     return chats as Chat[]
@@ -55,14 +90,31 @@ export async function getChats(userId?: string | null) {
   }
 }
 
-export async function getChat(id: string, userId: string) {
-  const chat = await firestore.collection('chat').doc(id).get()
+async function getChatWithCache(id: string): Promise<Chat> {
+  const cached = cache.get(id);
+  if (cached != undefined) {
+    logger.debug("read chat from cache: " + id);
+    return cached as Chat;
+  }
+  logger.debug("cache missing: " + id);
+  const snap = await firestore.collection('chat').doc(id).get()
 
-  if (!chat.exists || (userId && chat.data()!.userId !== userId)) {
+  const chat = snap.data() as Chat;
+  if (chat) {
+    logger.debug("populate cache. " + chat.id);
+    cache.set(chat.id, chat);
+  }
+  return chat;
+}
+
+export async function getChat(id: string, userId: string) {
+  const chat = await getChatWithCache(id);
+
+  if (!chat || (userId && chat!.userId !== userId)) {
     return null
   }
 
-  return chat.data() as Chat;
+  return chat;
 }
 
 export async function removeChat({ id, path }: { id: string; path: string }) {
@@ -73,6 +125,8 @@ export async function removeChat({ id, path }: { id: string; path: string }) {
       error: 'Unauthorized'
     }
   }
+
+
   const ref = firestore.collection('chat').doc(id);
   const chat = (await ref.get()).data()
 
@@ -87,6 +141,9 @@ export async function removeChat({ id, path }: { id: string; path: string }) {
         error: 'Unauthorized'
       }
     }
+    cache.delete(id);
+    cache.delete(`${uid}_chats`) //Simply delete chats cached
+
 
     await ref.delete();
   }
@@ -103,6 +160,8 @@ export async function clearChats() {
     }
   }
 
+  cache.clear()
+
   //TODO do nothings now.
 
   revalidatePath('/')
@@ -110,9 +169,8 @@ export async function clearChats() {
 }
 
 export async function getSharedChat(id: string) {
-  const ref = firestore.collection('chat').doc(id);
 
-  const chat = readChat((await ref.get()))
+  const chat = await getChatWithCache(id);
 
   if (!chat || !chat.sharePath) {
     return null
@@ -140,6 +198,7 @@ export async function shareChat(id: string) {
   }
 
   await ref.update({ sharePath: `/share/${chat.id}` })
+  cache.set(id, chat)
 
   return { ...chat, sharePath: `/share/${chat.id}` }
 }
@@ -150,10 +209,10 @@ export async function saveChat(chat: Chat) {
   if (session && session.user) {
     try {
       await firestore.collection('chat').doc(chat.id).set(chat)
+      cache.set(chat.id, chat);
     } catch (error) {
       console.error('Error writing document: ', error);
     }
-
   } else {
     return
   }

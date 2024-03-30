@@ -36,6 +36,7 @@
     "focus-trap-react": "^10.2.3",
     "framer-motion": "^10.18.0",
     "geist": "^1.2.1",
+    "lru-cache": "^10.2.0",
     "lucide-react": "^0.363.0",
     "nanoid": "^5.0.4",
     "next": "14.1.3",
@@ -52,6 +53,7 @@
     "remark-math": "^5.1.1",
     "sonner": "^1.4.3",
     "usehooks-ts": "^2.16.0",
+    "winston": "^3.13.0",
     "zod": "^3.22.4"
   },
   "devDependencies": {
